@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useAudioRecorder,
   useAudioRecorderState,
@@ -40,20 +40,17 @@ export function useChantCounter(settings: Settings) {
     typeof settings.sensitivity === 'number' ? settings.sensitivity : -35
   );
 
-  const phaseRef = useRef<Phase>('idle');
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
-
   const settingsRef = useRef(settings);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
 
-  const milestonesRef = useRef(getMilestones(settings.interval, settings.target));
-  useEffect(() => {
-    milestonesRef.current = getMilestones(settings.interval, settings.target);
-  }, [settings.interval, settings.target]);
+  // Recomputed synchronously during render (not a ref updated in an effect) so the UI
+  // never lags behind a just-changed interval/target waiting for an unrelated re-render.
+  const milestones = useMemo(
+    () => getMilestones(settings.interval, settings.target),
+    [settings.interval, settings.target]
+  );
 
   // Voice-activity-detection state (kept in refs since it's updated on every metering tick).
   const inSound = useRef(false);
@@ -88,10 +85,10 @@ export function useChantCounter(settings: Settings) {
     const { target, reminderMode } = settingsRef.current;
     if (count >= target) {
       handleCompleted();
-    } else if (milestonesRef.current.includes(count)) {
+    } else if (milestones.includes(count)) {
       announceMilestone(reminderMode, count, false);
     }
-  }, [count, handleCompleted]);
+  }, [count, handleCompleted, milestones]);
 
   const registerChantEnd = useCallback(() => {
     setCount((prev) => prev + 1);
@@ -249,7 +246,7 @@ export function useChantCounter(settings: Settings) {
     permissionDenied,
     startError,
     effectiveThreshold,
-    milestones: milestonesRef.current,
+    milestones,
     start,
     pause,
     reset,

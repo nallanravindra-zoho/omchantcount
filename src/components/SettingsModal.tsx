@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Settings, SENSITIVITY_PRESETS } from '../types';
 import { getMilestones } from '../milestones';
@@ -15,6 +15,16 @@ export function SettingsModal({ visible, settings, onClose, onChange }: Props) {
   const [targetText, setTargetText] = useState(String(settings.target));
   const [intervalText, setIntervalText] = useState(String(settings.interval));
 
+  // The modal stays mounted (just hidden) between opens, so resync the text fields to the
+  // real settings each time it opens rather than trusting whatever was last typed/loaded.
+  useEffect(() => {
+    if (visible) {
+      setTargetText(String(settings.target));
+      setIntervalText(String(settings.interval));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
   const commitTarget = () => {
     const n = Math.max(1, Math.round(Number(targetText)) || settings.target);
     setTargetText(String(n));
@@ -27,13 +37,25 @@ export function SettingsModal({ visible, settings, onClose, onChange }: Props) {
     onChange({ ...settings, interval: n });
   };
 
+  // Closing the modal (Done, backdrop, or the hardware/gesture back action) must not silently
+  // discard a value that was typed but never blurred — commit both fields together in one
+  // update so neither overwrites the other, then close.
+  const handleRequestClose = () => {
+    const target = Math.max(1, Math.round(Number(targetText)) || settings.target);
+    const interval = Math.max(1, Math.round(Number(intervalText)) || settings.interval);
+    setTargetText(String(target));
+    setIntervalText(String(interval));
+    onChange({ ...settings, target, interval });
+    onClose();
+  };
+
   const previewMilestones = getMilestones(
     Math.max(1, Math.round(Number(intervalText)) || settings.interval),
     Math.max(1, Math.round(Number(targetText)) || settings.target)
   );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleRequestClose}>
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
@@ -93,7 +115,7 @@ export function SettingsModal({ visible, settings, onClose, onChange }: Props) {
             </Text>
           </ScrollView>
 
-          <Pressable style={styles.doneButton} onPress={onClose}>
+          <Pressable style={styles.doneButton} onPress={handleRequestClose}>
             <Text style={styles.doneText}>Done</Text>
           </Pressable>
         </View>
