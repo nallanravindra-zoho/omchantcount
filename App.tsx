@@ -22,8 +22,18 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
 
-  const { count, phase, level, permissionDenied, milestones, start, pause, reset } =
-    useChantCounter(settings);
+  const {
+    count,
+    phase,
+    level,
+    permissionDenied,
+    startError,
+    effectiveThreshold,
+    milestones,
+    start,
+    pause,
+    reset,
+  } = useChantCounter(settings);
 
   useEffect(() => {
     loadSettings().then((s) => {
@@ -39,7 +49,7 @@ export default function App() {
   const handleChangeSettings = (next: Settings) => setSettings(next);
 
   const handlePrimaryPress = () => {
-    if (phase === 'listening') {
+    if (phase === 'listening' || phase === 'calibrating') {
       pause();
     } else if (phase === 'complete') {
       reset();
@@ -63,7 +73,13 @@ export default function App() {
   const progress = Math.min(1, count / settings.target);
 
   const primaryLabel =
-    phase === 'listening' ? 'Pause' : phase === 'complete' ? 'Start again' : count > 0 ? 'Resume' : 'Start';
+    phase === 'listening' || phase === 'calibrating'
+      ? 'Pause'
+      : phase === 'complete'
+        ? 'Start again'
+        : count > 0
+          ? 'Resume'
+          : 'Start';
 
   return (
     <View style={styles.container}>
@@ -89,15 +105,16 @@ export default function App() {
         </View>
 
         <Text style={styles.status}>
+          {phase === 'calibrating' && 'Calibrating to room noise…'}
           {phase === 'listening' && 'Listening…'}
           {phase === 'idle' && count === 0 && 'Ready when you are'}
           {phase === 'idle' && count > 0 && 'Paused'}
-          {phase === 'complete' && '108 complete 🙏'}
+          {phase === 'complete' && `${settings.target} complete 🙏`}
         </Text>
 
-        {phase === 'listening' && (
+        {(phase === 'listening' || phase === 'calibrating') && (
           <View style={styles.meterWrap}>
-            <LevelMeter level={level} threshold={settings.sensitivity} />
+            <LevelMeter level={level} threshold={effectiveThreshold} />
           </View>
         )}
 
@@ -115,6 +132,12 @@ export default function App() {
               {Platform.OS === 'ios' ? ' > Om Count' : ''}.
             </Text>
           </Pressable>
+        )}
+
+        {startError && (
+          <View style={styles.permissionBanner}>
+            <Text style={styles.permissionText}>{startError}</Text>
+          </View>
         )}
       </View>
 

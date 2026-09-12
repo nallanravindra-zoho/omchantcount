@@ -18,8 +18,12 @@ const MIN_SOUND_MS = 150;
 /** Silence must last this long before a chant is considered finished and counted. */
 const MIN_SILENCE_MS = 350;
 const SILENCE_DB = -160;
+/** How long to sample ambient noise before starting, when sensitivity is 'auto'. */
+const CALIBRATION_MS = 700;
+/** How far above the measured noise floor the auto threshold is set. */
+const CALIBRATION_MARGIN_DB = 12;
 
-export type Phase = 'idle' | 'listening' | 'complete';
+export type Phase = 'idle' | 'calibrating' | 'listening' | 'complete';
 
 const recordingOptions = { ...RecordingPresets.LOW_QUALITY, isMeteringEnabled: true };
 
@@ -31,6 +35,10 @@ export function useChantCounter(settings: Settings) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [level, setLevel] = useState(SILENCE_DB);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [effectiveThreshold, setEffectiveThreshold] = useState<number>(
+    typeof settings.sensitivity === 'number' ? settings.sensitivity : -35
+  );
 
   const phaseRef = useRef<Phase>('idle');
   useEffect(() => {
@@ -51,6 +59,11 @@ export function useChantCounter(settings: Settings) {
   const inSound = useRef(false);
   const soundStartedAt = useRef<number | null>(null);
   const silenceStartedAt = useRef<number | null>(null);
+
+  // Ambient-noise calibration state (only used when sensitivity is 'auto').
+  const activeThresholdRef = useRef<number>(effectiveThreshold);
+  const calibrationSamples = useRef<number[]>([]);
+  const calibrationStartedAt = useRef<number | null>(null);
 
   const stopRecorderQuietly = useCallback(async () => {
     try {
@@ -84,16 +97,44 @@ export function useChantCounter(settings: Settings) {
     setCount((prev) => prev + 1);
   }, []);
 
+  const calibrationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Ends calibration and locks in a threshold, however it was triggered (metering tick or safety timeout).
+  const finishCalibration = useCallback(() => {
+    if (calibrationTimeoutRef.current !== null) {
+      clearTimeout(calibrationTimeoutRef.current);
+      calibrationTimeoutRef.current = null;
+    }
+    const floor = calibrationSamples.current.length
+      ? Math.max(...calibrationSamples.current)
+      : SILENCE_DB;
+    const computed = floor + CALIBRATION_MARGIN_DB;
+    activeThresholdRef.current = computed;
+    setEffectiveThreshold(computed);
+    calibrationSamples.current = [];
+    calibrationStartedAt.current = null;
+    setPhase('listening');
+  }, []);
+
   // Process each metering tick through a simple hysteresis-based voice-activity detector:
   // a chant "ends" (and is counted) once the level drops back below threshold for MIN_SILENCE_MS.
   useEffect(() => {
-    if (phase !== 'listening') return;
     if (recorderState.metering === undefined) return;
+    if (phase !== 'listening' && phase !== 'calibrating') return;
 
     const db = recorderState.metering;
     setLevel(db);
     const now = Date.now();
-    const threshold = settingsRef.current.sensitivity;
+
+    if (phase === 'calibrating') {
+      calibrationSamples.current.push(db);
+      if (calibrationStartedAt.current !== null && now - calibrationStartedAt.current >= CALIBRATION_MS) {
+        finishCalibration();
+      }
+      return;
+    }
+
+    const threshold = activeThresholdRef.current;
 
     if (db > threshold) {
       silenceStartedAt.current = null;
@@ -114,38 +155,70 @@ export function useChantCounter(settings: Settings) {
         }
       }
     }
-  }, [recorderState.metering, phase, registerChantEnd]);
+  }, [recorderState.metering, phase, registerChantEnd, finishCalibration]);
 
   const start = useCallback(async () => {
-    let permission = await getRecordingPermissionsAsync();
-    if (!permission.granted) {
-      permission = await requestRecordingPermissionsAsync();
+    try {
+      setStartError(null);
+      let permission = await getRecordingPermissionsAsync();
+      if (!permission.granted) {
+        permission = await requestRecordingPermissionsAsync();
+      }
+      if (!permission.granted) {
+        setPermissionDenied(true);
+        return;
+      }
+      setPermissionDenied(false);
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        interruptionMode: 'mixWithOthers',
+      });
+
+      inSound.current = false;
+      soundStartedAt.current = null;
+      silenceStartedAt.current = null;
+
+      if (!recorder.isRecording) {
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+      }
+      activateKeepAwakeAsync().catch(() => {});
+
+      if (settingsRef.current.sensitivity === 'auto') {
+        calibrationSamples.current = [];
+        calibrationStartedAt.current = Date.now();
+        setPhase('calibrating');
+        // Safety net: if metering ticks stall (seen on some emulators/devices), don't hang forever.
+        calibrationTimeoutRef.current = setTimeout(finishCalibration, CALIBRATION_MS + 1000);
+      } else {
+        activeThresholdRef.current = settingsRef.current.sensitivity;
+        setEffectiveThreshold(settingsRef.current.sensitivity);
+        setPhase('listening');
+      }
+    } catch (e) {
+      console.error('[useChantCounter] start() failed:', e);
+      setStartError(
+        'Could not start listening. Close any other app using the microphone and try again.'
+      );
+      setPhase('idle');
     }
-    if (!permission.granted) {
-      setPermissionDenied(true);
-      return;
+  }, [recorder, finishCalibration]);
+
+  const clearCalibration = () => {
+    if (calibrationTimeoutRef.current !== null) {
+      clearTimeout(calibrationTimeoutRef.current);
+      calibrationTimeoutRef.current = null;
     }
-    setPermissionDenied(false);
-
-    await setAudioModeAsync({
-      allowsRecording: true,
-      playsInSilentMode: true,
-      interruptionMode: 'mixWithOthers',
-    });
-
-    inSound.current = false;
-    soundStartedAt.current = null;
-    silenceStartedAt.current = null;
-
-    await recorder.prepareToRecordAsync();
-    recorder.record();
-    activateKeepAwakeAsync().catch(() => {});
-    setPhase('listening');
-  }, [recorder]);
+    calibrationSamples.current = [];
+    calibrationStartedAt.current = null;
+  };
 
   const pause = useCallback(async () => {
     await stopRecorderQuietly();
     deactivateKeepAwake().catch(() => {});
+    clearCalibration();
     setPhase('idle');
   }, [stopRecorderQuietly]);
 
@@ -155,6 +228,7 @@ export function useChantCounter(settings: Settings) {
     inSound.current = false;
     soundStartedAt.current = null;
     silenceStartedAt.current = null;
+    clearCalibration();
     setLevel(SILENCE_DB);
     setCount(0);
     setPhase('idle');
@@ -164,6 +238,7 @@ export function useChantCounter(settings: Settings) {
     return () => {
       stopRecorderQuietly();
       deactivateKeepAwake().catch(() => {});
+      clearCalibration();
     };
   }, [stopRecorderQuietly]);
 
@@ -172,6 +247,8 @@ export function useChantCounter(settings: Settings) {
     phase,
     level,
     permissionDenied,
+    startError,
+    effectiveThreshold,
     milestones: milestonesRef.current,
     start,
     pause,
