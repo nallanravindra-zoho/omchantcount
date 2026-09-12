@@ -50,6 +50,7 @@ export function announceMilestone(
     return new Promise((resolve) => {
       Speech.speak(isFinal ? `${count}. Complete.` : String(count), {
         rate: 0.95,
+        language: 'en-IN',
         onDone: () => resolve(),
         onStopped: () => resolve(),
         onError: () => resolve(),
