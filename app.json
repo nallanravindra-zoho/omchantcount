@@ -1,13 +1,15 @@
 {
   "expo": {
-    "name": "omcount",
+    "name": "Om Count",
     "slug": "omcount",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#161225",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.omcount"
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +18,23 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Om Count listens to your chanting to count it — audio is processed on your device only and never recorded to a file.",
+          "enableBackgroundPlayback": false
+        }
+      ]
+    ]
   }
 }
