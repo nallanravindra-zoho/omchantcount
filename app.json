@@ -22,7 +22,8 @@
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
-      ]
+      ],
+      "package": "com.anonymous.omcount"
     },
     "web": {
       "favicon": "./assets/favicon.png"
