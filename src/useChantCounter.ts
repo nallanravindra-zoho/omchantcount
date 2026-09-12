@@ -62,6 +62,10 @@ export function useChantCounter(settings: Settings) {
   const calibrationSamples = useRef<number[]>([]);
   const calibrationStartedAt = useRef<number | null>(null);
 
+  // While a spoken number or chime is playing, the mic can hear the phone's own speaker —
+  // this suppresses chant detection for that window so playback doesn't count as a chant.
+  const isAnnouncingRef = useRef(false);
+
   const stopRecorderQuietly = useCallback(async () => {
     try {
       if (recorder.isRecording) {
@@ -86,7 +90,10 @@ export function useChantCounter(settings: Settings) {
     if (count >= target) {
       handleCompleted();
     } else if (milestones.includes(count)) {
-      announceMilestone(reminderMode, count, false);
+      isAnnouncingRef.current = true;
+      announceMilestone(reminderMode, count, false).finally(() => {
+        isAnnouncingRef.current = false;
+      });
     }
   }, [count, handleCompleted, milestones]);
 
@@ -118,6 +125,7 @@ export function useChantCounter(settings: Settings) {
   useEffect(() => {
     if (recorderState.metering === undefined) return;
     if (phase !== 'listening' && phase !== 'calibrating') return;
+    if (isAnnouncingRef.current) return;
 
     const db = recorderState.metering;
     setLevel(db);
@@ -153,6 +161,25 @@ export function useChantCounter(settings: Settings) {
       }
     }
   }, [recorderState.metering, phase, registerChantEnd, finishCalibration]);
+
+  // Apply a sensitivity change immediately while already listening/calibrating, instead of
+  // requiring a Reset — switching to 'auto' re-calibrates in place without losing the count.
+  useEffect(() => {
+    if (phase !== 'listening' && phase !== 'calibrating') return;
+    if (settings.sensitivity === 'auto') {
+      calibrationSamples.current = [];
+      calibrationStartedAt.current = Date.now();
+      setPhase('calibrating');
+      if (calibrationTimeoutRef.current !== null) clearTimeout(calibrationTimeoutRef.current);
+      calibrationTimeoutRef.current = setTimeout(finishCalibration, CALIBRATION_MS + 1000);
+    } else {
+      activeThresholdRef.current = settings.sensitivity;
+      setEffectiveThreshold(settings.sensitivity);
+    }
+    // Deliberately reacts only to the sensitivity setting changing, not to phase transitions
+    // (those are already handled by start()).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.sensitivity, finishCalibration]);
 
   const start = useCallback(async () => {
     try {

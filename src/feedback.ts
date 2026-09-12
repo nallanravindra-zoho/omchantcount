@@ -28,15 +28,36 @@ function playFromStart(player: AudioPlayer) {
   }
 }
 
-/** Fires the configured feedback for a milestone or the final completed count. */
-export function announceMilestone(mode: ReminderMode, count: number, isFinal: boolean) {
+/** Approximate playback length of the bundled feedback sounds, with a safety margin. */
+const CHIME_DURATION_MS = 750;
+const COMPLETE_DURATION_MS = 900;
+
+/**
+ * Fires the configured feedback for a milestone or the final completed count, and resolves
+ * once it has finished playing — callers use this to briefly pause listening so the phone
+ * doesn't hear its own spoken number or chime and miscount it as a chant.
+ */
+export function announceMilestone(
+  mode: ReminderMode,
+  count: number,
+  isFinal: boolean
+): Promise<void> {
   Haptics.notificationAsync(
     isFinal ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Warning
   ).catch(() => {});
 
   if (mode === 'voice') {
-    Speech.speak(isFinal ? `${count}. Complete.` : String(count), { rate: 0.95 });
-  } else {
-    playFromStart(isFinal ? getCompletePlayer() : getChimePlayer());
+    return new Promise((resolve) => {
+      Speech.speak(isFinal ? `${count}. Complete.` : String(count), {
+        rate: 0.95,
+        onDone: () => resolve(),
+        onStopped: () => resolve(),
+        onError: () => resolve(),
+      });
+    });
   }
+
+  playFromStart(isFinal ? getCompletePlayer() : getChimePlayer());
+  const durationMs = isFinal ? COMPLETE_DURATION_MS : CHIME_DURATION_MS;
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
